@@ -1,0 +1,4 @@
+(executable
+ (public_name outside_in)
+ (name main)
+ (libraries compiler_lib))
