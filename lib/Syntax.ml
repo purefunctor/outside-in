@@ -15,6 +15,6 @@ type expr =
   | `Lambda of string * expr
   | `Application of expr * expr ]
 
-type predicate = [ `Unify of mono_t * mono_t ]
+type predicate = [ `Eq of mono_t | `Unify of mono_t * mono_t ]
 type scheme_t = [ `Forall of string list * predicate list * mono_t ]
 type q_constraint = [ | predicate ]
