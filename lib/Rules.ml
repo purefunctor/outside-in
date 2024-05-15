@@ -89,7 +89,7 @@ and unify (state : State.t) (x_t : mono_t) (y_t : mono_t) =
   | `Unification x_u, `Unification y_u ->
       if x_u = y_u then () else solve state x_u y_t
   | `Variable x, `Variable y ->
-      if x == y then () else failwith "cannot unify skolems"
+      if String.equal x y then () else failwith "cannot unify skolems"
   | `Unification u, t | t, `Unification u -> solve state u t
   | _, _ -> failwith "cannot unify types"
 
