@@ -86,7 +86,8 @@ and unify (state : State.t) (x_t : mono_t) (y_t : mono_t) =
   | `Function (x_a, x_r), `Function (y_a, y_r) ->
       unify state x_a y_a;
       unify state x_r y_r
-  | `Unification x_u, `Unification _ -> solve state x_u y_t
+  | `Unification x_u, `Unification y_u ->
+      if x_u = y_u then () else solve state x_u y_t
   | `Variable x, `Variable y ->
       if x == y then () else failwith "cannot unify skolems"
   | `Unification u, t | t, `Unification u -> solve state u t
