@@ -115,6 +115,54 @@ let rec infer (state : State.t) (e : expr) : mono_t * q_constraint list =
       let e_t, e_c = State.with_mono state v v_t @@ fun () -> infer state e in
       (`Function (v_t, e_t), e_c)
 
+let deref =
+  let rec aux (t : mono_t) =
+    match t with `Unification { contents = `Solved t } -> aux t | _ -> t
+  in
+  aux
+
+let solve_eq (given : q_constraint list) (t : mono_t) =
+  let rec matches (x_t : mono_t) (y_t : mono_t) =
+    match (x_t, y_t) with
+    | `Bool, `Bool -> true
+    | `Int, `Int -> true
+    | `Application (x_f, x_a), `Application (y_f, y_a) ->
+        matches x_f y_f && matches x_a y_a
+    | `Function (x_a, x_r), `Function (y_a, y_r) ->
+        matches x_a y_a && matches x_r y_r
+    | `Unification x_u, `Unification y_u -> x_u = y_u
+    | `Variable x, `Variable y -> String.equal x y
+    | _ -> false
+  in
+  let search_given = function `Eq t' -> matches t t' | _ -> false in
+  given |> List.exists search_given
+
+let solve (state : State.t) (given : q_constraint list)
+    (wanted : q_constraint list) : q_constraint list =
+  let rec aux (residual : q_constraint list) (constraints : q_constraint list) =
+    match constraints with
+    | head :: rest -> (
+        match head with
+        | `Unify (x_t, y_t) ->
+            unify state x_t y_t;
+            aux residual rest
+        | `Eq t ->
+            if solve_eq given (deref t) then aux residual rest
+            else aux (head :: residual) rest)
+    | [] -> residual
+  in
+  aux [] wanted
+
+let check_binding (state : State.t) (e : expr) (t : scheme_t) =
+  let e_t, e_c = infer state e in
+  let r_c =
+    match t with
+    | `Forall (_, predicates, t) ->
+        unify state e_t t;
+        solve state predicates e_c
+  in
+  match r_c with [] -> [] | _ -> failwith "unsolved constraints"
+
 let program () =
   let state = State.create () in
 
@@ -126,4 +174,4 @@ let program () =
   in
   State.add_poly state "eq" eq_t;
 
-  infer state (`Application (`Application (`Variable "eq", `Int 42), `Int 42))
+  check_binding state (`Variable "eq") eq_t
