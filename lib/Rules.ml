@@ -1,177 +1,143 @@
 open Syntax
 module StringMap = Map.Make (String)
 
-module State = struct
-  type t = {
-    mutable index : int;
-    mutable mono : mono_t StringMap.t;
-    mutable poly : scheme_t StringMap.t;
-  }
+module Environment = struct
+  type t = { mutable values : ty StringMap.t }
 
-  let create () = { index = 0; mono = StringMap.empty; poly = StringMap.empty }
+  let create () = { values = StringMap.empty }
+  let add_value k v e = e.values <- StringMap.add k v e.values
+  let get_value k e = StringMap.find_opt k e.values
 
-  let fresh_unification state =
-    let index = state.index in
-    state.index <- state.index + 1;
-    `Unification (ref (`Unsolved index))
-
-  let add_mono state k v = state.mono <- StringMap.add k v state.mono
-  let get_mono state k = StringMap.find_opt k state.mono
-
-  let with_mono state k v f =
-    state.mono <- StringMap.add k v state.mono;
+  let with_value k v f e =
+    e.values <- StringMap.add k v e.values;
     let r = f () in
-    state.mono <- StringMap.remove k state.mono;
+    e.values <- StringMap.remove k e.values;
     r
-
-  let add_poly state k v = state.poly <- StringMap.add k v state.poly
-  let get_poly state k = StringMap.find_opt k state.poly
 end
 
-let replace_type (substitution : mono_t StringMap.t) =
-  let rec aux (t : mono_t) =
-    match t with
-    | `Bool -> t
-    | `Int -> t
-    | `Application (f, x) ->
-        let f = aux f in
-        let x = aux x in
-        `Application (f, x)
-    | `Function (a, r) ->
-        let a = aux a in
-        let r = aux r in
-        `Function (a, r)
-    | `Unification _ -> t
-    | `Variable v ->
-        StringMap.find_opt v substitution |> Option.value ~default:t
+let fresh_unification : string option -> ty =
+  let counter = ref 0 in
+  fun name ->
+    let count = !counter in
+    counter := count + 1;
+    Unification (name, Unsolved count |> ref)
+
+let instantiate (t : ty) =
+  (* FIXME: Maybe account for potential shadowing when we introduce rank-n types?
+     An interesting solution would be to include the skolem level as part of the
+     key, to further restrict usage. *)
+  let make_traversal variables =
+    object
+      inherit [unit] Traversal.traversal
+
+      method! ty state t =
+        match t with
+        | Skolem s -> begin
+            match StringMap.find_opt s variables with
+            | Some t -> (t, state)
+            | None -> (t, state)
+          end
+        | _ -> (t, state)
+    end
   in
-  aux
-
-let replace_predicate (substitution : mono_t StringMap.t)
-    (predicate : predicate) =
-  match predicate with
-  | `Unify (x_t, y_t) ->
-      let x_t = replace_type substitution x_t in
-      let y_t = replace_type substitution y_t in
-      `Unify (x_t, y_t)
-  | `Eq t ->
-      let t = replace_type substitution t in
-      `Eq t
-
-let replace_predicates (substitution : mono_t StringMap.t) :
-    predicate list -> predicate list =
-  List.map (replace_predicate substitution)
-
-let instantiate (state : State.t) (t : scheme_t) : mono_t * q_constraint list =
   match t with
-  | `Forall (variables, predicates, t) ->
-      let substitution =
-        let fresh_unification variable =
-          (variable, state |> State.fresh_unification)
-        in
-        variables |> List.map fresh_unification |> StringMap.of_list
+  | Forall (variables, predicates, t) ->
+      let traversal =
+        let from_variable v = (v, fresh_unification (Some v)) in
+        variables |> List.map from_variable |> StringMap.of_list
+        |> make_traversal
       in
-      (replace_type substitution t, replace_predicates substitution predicates)
 
-let rec solve (state : State.t) (u : unification_variable ref) (t : mono_t) =
-  match !u with `Unsolved _ -> u := `Solved t | `Solved t' -> unify state t' t
+      let predicates, _ =
+        Traversal.traverse_list traversal#traverse_ty_predicate () predicates
+      in
+      let t, _ = traversal#traverse_ty () t in
 
-and unify (state : State.t) (x_t : mono_t) (y_t : mono_t) =
-  match (x_t, y_t) with
-  | `Bool, `Bool -> ()
-  | `Int, `Int -> ()
-  | `Application (x_f, x_a), `Application (y_f, y_a) ->
-      unify state x_f y_f;
-      unify state x_a y_a
-  | `Function (x_a, x_r), `Function (y_a, y_r) ->
-      unify state x_a y_a;
-      unify state x_r y_r
-  | `Unification x_u, `Unification y_u ->
-      if x_u = y_u then () else solve state x_u y_t
-  | `Variable x, `Variable y ->
-      if String.equal x y then () else failwith "cannot unify skolems"
-  | `Unification u, t | t, `Unification u -> solve state u t
-  | _, _ -> failwith "cannot unify types"
+      (t, predicates |> List.map Predicate.to_constraint)
+  | _ -> (t, [])
 
-let rec infer (state : State.t) (e : expr) : mono_t * q_constraint list =
+let occurs_check (u : ty_unification ref) (t : ty) =
+  let traversal =
+    object
+      inherit [bool] Traversal.traversal
+
+      method! ty state ty =
+        match ty with
+        | Unification (_, u') -> (t, state || Unification.equal !u !u')
+        | _ -> (ty, state)
+    end
+  in
+  let _, result = traversal#traverse_ty false t in
+  result
+
+let rec solve (environment : Environment.t) (u : ty_unification ref) (t : ty) =
+  if occurs_check u t then failwith (__LOC__ ^ ": failed occurs check.")
+  else
+    match !u with
+    | Unsolved i -> u := Solved (i, t)
+    | Solved (_, t') -> unify environment t t'
+
+and unify (environment : Environment.t) (x_ty : ty) (y_ty : ty) =
+  let x_ty = Type.normalize x_ty in
+  let y_ty = Type.normalize y_ty in
+  match (x_ty, y_ty) with
+  | Int, Int -> ()
+  | Bool, Bool -> ()
+  | Application (x_f, x_a), Application (y_f, y_a) ->
+      unify environment x_f y_f;
+      unify environment x_a y_a
+  | Function (x_a, x_r), Function (y_a, y_r) ->
+      unify environment x_a y_a;
+      unify environment x_r y_r
+  | Skolem x_s, Skolem y_s ->
+      if String.equal x_s y_s then ()
+      else failwith (__LOC__ ^ ": cannot unify skolem variables.")
+  | Forall _, _
+  | _, Forall _ ->
+      failwith (__LOC__ ^ ": todo bidirectional type checking")
+  | Unification (_, x_u), Unification (_, y_u) ->
+      if Unification.equal !x_u !y_u then () else solve environment x_u y_ty
+  | Unification (_, u), t
+  | t, Unification (_, u) ->
+      solve environment u t
+  | _, _ -> failwith (__LOC__ ^ ": cannot unify these types.")
+
+let rec infer (environment : Environment.t) (e : tm) =
   match e with
-  | `Bool _ -> (`Bool, [])
-  | `Int _ -> (`Int, [])
-  | `Variable v -> (
-      match State.get_mono state v with
+  | Int _ -> ((Int : ty), [])
+  | Bool _ -> ((Bool : ty), [])
+  | Apply (f, a) ->
+      let f_t, c0 = infer environment f in
+      let f_t, c1 = instantiate f_t in
+      let a_t, c2 = infer environment a in
+
+      let r_t = fresh_unification None in
+      unify environment f_t (Function (a_t, r_t));
+
+      (r_t, List.concat [ c0; c1; c2 ])
+  | Lambda (v, e) ->
+      let v_t = fresh_unification (Some v) in
+      let e_t, c0 =
+        environment
+        |> Environment.with_value v v_t @@ fun () -> infer environment e
+      in
+      (Function (v_t, e_t), c0)
+  | Variable v -> begin
+      match environment |> Environment.get_value v with
+      | None -> failwith (__LOC__ ^ ": unbound variable")
       | Some t -> (t, [])
-      | None -> (
-          match State.get_poly state v with
-          | Some t -> instantiate state t
-          | None -> failwith "variable is unbound"))
-  | `Application (f, x) ->
-      let f_t, f_c = infer state f in
-      let x_t, x_c = infer state x in
-      let r_t = State.fresh_unification state in
-      unify state f_t (`Function (x_t, r_t));
-      (r_t, f_c @ x_c)
-  | `Lambda (v, e) ->
-      let v_t = State.fresh_unification state in
-      let e_t, e_c = State.with_mono state v v_t @@ fun () -> infer state e in
-      (`Function (v_t, e_t), e_c)
-
-let deref =
-  let rec aux (t : mono_t) =
-    match t with `Unification { contents = `Solved t } -> aux t | _ -> t
-  in
-  aux
-
-let solve_eq (given : q_constraint list) (t : mono_t) =
-  let rec matches (x_t : mono_t) (y_t : mono_t) =
-    match (x_t, y_t) with
-    | `Bool, `Bool -> true
-    | `Int, `Int -> true
-    | `Application (x_f, x_a), `Application (y_f, y_a) ->
-        matches x_f y_f && matches x_a y_a
-    | `Function (x_a, x_r), `Function (y_a, y_r) ->
-        matches x_a y_a && matches x_r y_r
-    | `Unification x_u, `Unification y_u -> x_u = y_u
-    | `Variable x, `Variable y -> String.equal x y
-    | _ -> false
-  in
-  let search_given = function `Eq t' -> matches t t' | _ -> false in
-  given |> List.exists search_given
-
-let solve (state : State.t) (given : q_constraint list)
-    (wanted : q_constraint list) : q_constraint list =
-  let rec aux (residual : q_constraint list) (constraints : q_constraint list) =
-    match constraints with
-    | head :: rest -> (
-        match head with
-        | `Unify (x_t, y_t) ->
-            unify state x_t y_t;
-            aux residual rest
-        | `Eq t ->
-            if solve_eq given (deref t) then aux residual rest
-            else aux (head :: residual) rest)
-    | [] -> residual
-  in
-  aux [] wanted
-
-let check_binding (state : State.t) (e : expr) (t : scheme_t) =
-  let e_t, e_c = infer state e in
-  let r_c =
-    match t with
-    | `Forall (_, predicates, t) ->
-        unify state e_t t;
-        solve state predicates e_c
-  in
-  match r_c with [] -> [] | _ -> failwith "unsolved constraints"
+    end
 
 let program () =
-  let state = State.create () in
-
-  let eq_t : scheme_t =
-    `Forall
+  let environment = Environment.create () in
+  let eq_t =
+    Forall
       ( [ "a" ],
-        [ `Eq (`Variable "a") ],
-        `Function (`Variable "a", `Function (`Variable "a", `Bool)) )
+        [ Eq (Skolem "a") ],
+        Function ((Skolem "a" : ty), Function (Skolem "a", Bool)) )
   in
-  State.add_poly state "eq" eq_t;
-
-  check_binding state (`Variable "eq") eq_t
+  environment |> Environment.add_value "eq" eq_t;
+  let t, c =
+    infer environment (Apply (Apply (Variable "eq", Int 10), Int 10))
+  in
+  (Type.normalize t, c)
