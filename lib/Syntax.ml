@@ -19,12 +19,6 @@ type tm =
 
 type ty_constraint = Predicate of ty_predicate
 
-module Predicate = struct
-  type t = ty_predicate
-
-  let to_constraint predicate = Predicate predicate
-end
-
 module Type = struct
   type t = ty
 
@@ -34,6 +28,16 @@ module Type = struct
       | t -> t
     in
     aux
+end
+
+module Predicate = struct
+  type t = ty_predicate
+
+  let to_constraint predicate = Predicate predicate
+
+  let normalize : t -> t = function
+    | Eq t -> Eq (Type.normalize t)
+    | Unify (x_ty, y_ty) -> Unify (Type.normalize x_ty, Type.normalize y_ty)
 end
 
 module Unification = struct
