@@ -26,6 +26,7 @@ let instantiate (t : ty) =
   (* FIXME: Maybe account for potential shadowing when we introduce rank-n types?
      An interesting solution would be to include the skolem level as part of the
      key, to further restrict usage. *)
+  Logging.info (fun log -> log "instantiate: %s" (Pretty.render_ty t));
   let make_traversal variables =
     object
       inherit [unit] Traversal.traversal
@@ -70,7 +71,12 @@ let occurs_check (u : ty_unification ref) (t : ty) =
   let _, result = traversal#traverse_ty false t in
   result
 
-let rec solve (environment : Environment.t) (u : ty_unification ref) (t : ty) =
+let rec solve_unification (environment : Environment.t) (u : ty_unification ref)
+    (t : ty) =
+  Logging.info (fun log ->
+      log "solve: %s ~ %s"
+        (Pretty.render_ty_unification None u)
+        (Pretty.render_ty t));
   if occurs_check u t then failwith (__LOC__ ^ ": failed occurs check.")
   else
     match !u with
@@ -78,6 +84,8 @@ let rec solve (environment : Environment.t) (u : ty_unification ref) (t : ty) =
     | Solved (_, t') -> unify environment t t'
 
 and unify (environment : Environment.t) (x_ty : ty) (y_ty : ty) =
+  Logging.info (fun log ->
+      log "unify: %s ~ %s" (Pretty.render_ty x_ty) (Pretty.render_ty y_ty));
   let x_ty = Type.normalize x_ty in
   let y_ty = Type.normalize y_ty in
   match (x_ty, y_ty) with
@@ -96,13 +104,15 @@ and unify (environment : Environment.t) (x_ty : ty) (y_ty : ty) =
   | _, Forall _ ->
       failwith (__LOC__ ^ ": todo bidirectional type checking")
   | Unification (_, x_u), Unification (_, y_u) ->
-      if Unification.equal !x_u !y_u then () else solve environment x_u y_ty
+      if Unification.equal !x_u !y_u then ()
+      else solve_unification environment x_u y_ty
   | Unification (_, u), t
   | t, Unification (_, u) ->
-      solve environment u t
+      solve_unification environment u t
   | _, _ -> failwith (__LOC__ ^ ": cannot unify these types.")
 
 let rec infer (environment : Environment.t) (e : tm) =
+  Logging.info (fun log -> log "infer: %s" (Pretty.render_tm e));
   match e with
   | Int _ -> ((Int : ty), [])
   | Bool _ -> ((Bool : ty), [])

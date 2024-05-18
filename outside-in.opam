@@ -10,6 +10,9 @@ bug-reports: "https://github.com/purefunctor/outside-in/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.15"}
+  "fmt" {>= "0.9.0"}
+  "logs" {>= "0.7.0"}
+  "pprint" {>= "20230830"}
   "odoc" {with-doc}
 ]
 build: [

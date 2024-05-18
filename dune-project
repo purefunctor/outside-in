@@ -17,4 +17,9 @@
  (name outside-in)
  (synopsis "An implementation of OutsideIn(X)")
  (description "An implementation of OutsideIn(X).")
- (depends ocaml dune))
+ (depends 
+  ocaml 
+  dune
+  (fmt (>= "0.9.0"))
+  (logs (>= "0.7.0"))
+  (pprint (>= "20230830"))))

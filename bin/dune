@@ -1,4 +1,4 @@
 (executable
  (public_name outside_in)
  (name main)
- (libraries compiler_lib))
+ (libraries compiler_lib logs logs.fmt))
