@@ -2,9 +2,12 @@ open Syntax
 module StringMap = Map.Make (String)
 
 module Environment = struct
-  type t = { mutable values : ty StringMap.t }
+  type t = {
+    mutable instances : ty_instance list StringMap.t;
+    mutable values : ty StringMap.t;
+  }
 
-  let create () = { values = StringMap.empty }
+  let create () = { instances = StringMap.empty; values = StringMap.empty }
   let add_value k v e = e.values <- StringMap.add k v e.values
   let get_value k e = StringMap.find_opt k e.values
 
@@ -12,6 +15,17 @@ module Environment = struct
     e.values <- StringMap.add k v e.values;
     let r = f () in
     e.values <- StringMap.remove k e.values;
+    r
+
+  let add_instance k v e = e.instances <- StringMap.add_to_list k v e.instances
+
+  let get_instances k e =
+    StringMap.find_opt k e.instances |> Option.value ~default:[]
+
+  let with_instance k v f e =
+    e.instances <- StringMap.add_to_list k v e.instances;
+    let r = f () in
+    e.instances <- StringMap.remove k e.instances;
     r
 end
 
@@ -153,38 +167,23 @@ let rec match_type (x_ty : ty) (y_ty : ty) : bool =
   | Unification (_, x_u), Unification (_, y_u) -> Unification.equal !x_u !y_u
   | _, _ -> false
 
-(*
-   TODO:
-
-   1. Figure out how to do subgoals in instances e.g. Eq a => Eq [a]
-   2. Given constraints should be a part of the environment, that is,
-      it can be represented not by a list of constraints but using a
-      more convenient type that allows for more generic searching.
-*)
-let solve (environment : Environment.t) (given : ty_constraint list)
-    (wanted : ty_constraint list) : ty_constraint list =
-  let rec solve_eq (t : ty) =
-    let t = Type.normalize t in
-    match t with
-    | Int
-    | Bool ->
-        true
-    | _ ->
-        let eq_instances =
-          given
-          |> List.filter_map (fun c ->
-                 match c with
-                 | Predicate (Eq t) -> Some t
-                 | _ -> None)
-        in
-        List.exists (fun t' -> match_type t t') eq_instances
-  and aux residual wanted =
+let solve (environment : Environment.t) (wanted : ty_constraint list) :
+    ty_constraint list =
+  let find_instance (class_name : string) (arguments : ty list) =
+    let arguments = List.map Type.normalize arguments in
+    let instances = environment |> Environment.get_instances class_name in
+    List.exists
+      (fun (Instance (_, arguments')) ->
+        List.for_all2 match_type arguments arguments')
+      instances
+  in
+  let rec aux residual wanted =
     match wanted with
     | [] -> residual
     | Predicate head :: rest -> begin
         match head with
         | Eq t ->
-            if solve_eq t then aux residual rest
+            if find_instance "Eq" [ t ] then aux residual rest
             else aux (Predicate head :: residual) rest
         | Unify (x_ty, y_ty) ->
             unify environment x_ty y_ty;
@@ -203,11 +202,14 @@ let program () =
   in
   environment |> Environment.add_value "eq" eq_t;
 
+  environment |> Environment.add_instance "Eq" (Instance ([], [ Int ]));
+  environment |> Environment.add_instance "Eq" (Instance ([], [ Bool ]));
+
   print_endline "Case 1";
   let t, c =
     infer environment (Apply (Apply (Variable "eq", Int 10), Int 10))
   in
-  let c = solve environment [] c in
+  let c = solve environment c in
   print_endline @@ Pretty.render_ty t;
   c
   |> List.iter (fun (Predicate p) ->
@@ -217,7 +219,12 @@ let program () =
   let t, c0 = infer environment (Variable "eq") in
   let t, c1 = instantiate t in
   unify environment t (Function (Skolem "a", Function (Skolem "a", Bool)));
-  let c = solve environment [ Predicate (Eq (Skolem "a")) ] (c0 @ c1) in
+  let c =
+    environment
+    |> Environment.with_instance "Eq"
+         (Instance ([], [ Skolem "a" ]))
+         (fun () -> solve environment (c0 @ c1))
+  in
   print_endline @@ Pretty.render_ty t;
   c
   |> List.iter (fun (Predicate p) ->

@@ -10,14 +10,15 @@ type ty =
 and ty_predicate = Eq of ty | Unify of ty * ty
 and ty_unification = Unsolved of int | Solved of (int * ty)
 
+type ty_constraint = Predicate of ty_predicate
+type ty_instance = Instance of ty_predicate list * ty list
+
 type tm =
   | Apply of tm * tm
   | Lambda of string * tm
   | Variable of string
   | Int of int
   | Bool of bool
-
-type ty_constraint = Predicate of ty_predicate
 
 module Type = struct
   type t = ty
