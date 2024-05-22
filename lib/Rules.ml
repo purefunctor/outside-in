@@ -138,6 +138,61 @@ let rec infer (environment : Environment.t) (e : tm) =
       | Some t -> (t, [])
     end
 
+let rec match_type (x_ty : ty) (y_ty : ty) : bool =
+  let x_ty = Type.normalize x_ty in
+  let y_ty = Type.normalize y_ty in
+  match (x_ty, y_ty) with
+  | Int, Int
+  | Bool, Bool ->
+      true
+  | Application (x_f, x_a), Application (y_f, y_a) ->
+      match_type x_f y_f && match_type x_a y_a
+  | Function (x_a, x_r), Function (y_a, y_r) ->
+      match_type x_a y_a && match_type x_r y_r
+  | Skolem x_s, Skolem y_s -> String.equal x_s y_s
+  | Unification (_, x_u), Unification (_, y_u) -> Unification.equal !x_u !y_u
+  | _, _ -> false
+
+(*
+   TODO:
+
+   1. Figure out how to do subgoals in instances e.g. Eq a => Eq [a]
+   2. Given constraints should be a part of the environment, that is,
+      it can be represented not by a list of constraints but using a
+      more convenient type that allows for more generic searching.
+*)
+let solve (environment : Environment.t) (given : ty_constraint list)
+    (wanted : ty_constraint list) : ty_constraint list =
+  let rec solve_eq (t : ty) =
+    let t = Type.normalize t in
+    match t with
+    | Int
+    | Bool ->
+        true
+    | _ ->
+        let eq_instances =
+          given
+          |> List.filter_map (fun c ->
+                 match c with
+                 | Predicate (Eq t) -> Some t
+                 | _ -> None)
+        in
+        List.exists (fun t' -> match_type t t') eq_instances
+  and aux residual wanted =
+    match wanted with
+    | [] -> residual
+    | Predicate head :: rest -> begin
+        match head with
+        | Eq t ->
+            if solve_eq t then aux residual rest
+            else aux (Predicate head :: residual) rest
+        | Unify (x_ty, y_ty) ->
+            unify environment x_ty y_ty;
+            aux residual rest
+      end
+  in
+  aux [] wanted
+
 let program () =
   let environment = Environment.create () in
   let eq_t =
@@ -147,7 +202,23 @@ let program () =
         Function ((Skolem "a" : ty), Function (Skolem "a", Bool)) )
   in
   environment |> Environment.add_value "eq" eq_t;
+
+  print_endline "Case 1";
   let t, c =
     infer environment (Apply (Apply (Variable "eq", Int 10), Int 10))
   in
-  (Type.normalize t, c)
+  let c = solve environment [] c in
+  print_endline @@ Pretty.render_ty t;
+  c
+  |> List.iter (fun (Predicate p) ->
+         print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p);
+
+  print_endline "Case 2";
+  let t, c0 = infer environment (Variable "eq") in
+  let t, c1 = instantiate t in
+  unify environment t (Function (Skolem "a", Function (Skolem "a", Bool)));
+  let c = solve environment [ Predicate (Eq (Skolem "a")) ] (c0 @ c1) in
+  print_endline @@ Pretty.render_ty t;
+  c
+  |> List.iter (fun (Predicate p) ->
+         print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p)
