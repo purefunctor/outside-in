@@ -12,9 +12,10 @@ module Environment = struct
   let get_value k e = StringMap.find_opt k e.values
 
   let with_value k v f e =
+    let previous_values = e.values in
     e.values <- StringMap.add k v e.values;
     let r = f () in
-    e.values <- StringMap.remove k e.values;
+    e.values <- previous_values;
     r
 
   let add_instance k v e = e.instances <- StringMap.add_to_list k v e.instances
@@ -23,9 +24,10 @@ module Environment = struct
     StringMap.find_opt k e.instances |> Option.value ~default:[]
 
   let with_instance k v f e =
+    let previous_instances = e.instances in
     e.instances <- StringMap.add_to_list k v e.instances;
     let r = f () in
-    e.instances <- StringMap.remove k e.instances;
+    e.instances <- previous_instances;
     r
 end
 
