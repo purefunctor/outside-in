@@ -47,6 +47,7 @@ let rec pretty_ty =
     | Unification (n, u) -> pretty_ty_unification n u
     | Int -> string "Int"
     | Bool -> string "Bool"
+    | List t -> string "List" ^^ space ^^ aux t
   in
   aux
 
@@ -72,6 +73,7 @@ let pretty_tm =
     | Variable v -> string v
     | Int i -> string_of_int i |> string
     | Bool b -> string_of_bool b |> string
+    | List es -> flow_map (comma ^^ space) aux es |> brackets
   in
   aux
 

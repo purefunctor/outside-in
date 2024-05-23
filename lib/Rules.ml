@@ -38,31 +38,31 @@ let fresh_unification : string option -> ty =
     counter := count + 1;
     Unification (name, Unsolved count |> ref)
 
-let instantiate (t : ty) =
-  (* FIXME: Maybe account for potential shadowing when we introduce rank-n types?
-     An interesting solution would be to include the skolem level as part of the
-     key, to further restrict usage. *)
-  Logging.info (fun log -> log "instantiate: %s" (Pretty.render_ty t));
-  let make_traversal variables =
-    object
-      inherit [unit] Traversal.traversal
+(* FIXME: Maybe account for potential shadowing when we introduce rank-n types?
+   An interesting solution would be to include the skolem level as part of the
+   key, to further restrict usage. *)
+let replace_type_variables_traversal variables =
+  object
+    inherit [unit] Traversal.traversal
 
-      method! ty state t =
-        match t with
-        | Skolem s -> begin
-            match StringMap.find_opt s variables with
-            | Some t -> (t, state)
-            | None -> (t, state)
-          end
-        | _ -> (t, state)
-    end
-  in
+    method! ty state t =
+      match t with
+      | Skolem s -> begin
+          match StringMap.find_opt s variables with
+          | Some t -> (t, state)
+          | None -> (t, state)
+        end
+      | _ -> (t, state)
+  end
+
+let instantiate (t : ty) =
+  Logging.info (fun log -> log "instantiate: %s" (Pretty.render_ty t));
   match t with
   | Forall (variables, predicates, t) ->
       let traversal =
         let from_variable v = (v, fresh_unification (Some v)) in
         variables |> List.map from_variable |> StringMap.of_list
-        |> make_traversal
+        |> replace_type_variables_traversal
       in
 
       let predicates, _ =
@@ -132,6 +132,17 @@ let rec infer (environment : Environment.t) (e : tm) =
   match e with
   | Int _ -> ((Int : ty), [])
   | Bool _ -> ((Bool : ty), [])
+  | List es -> begin
+      match es with
+      | [] -> (fresh_unification None, [])
+      | head :: rest ->
+          let head_t, head_c = infer environment head in
+          let rest_t, rest_c =
+            List.map (infer environment) rest |> List.split
+          in
+          List.iter (unify environment head_t) rest_t;
+          (List head_t, head_c :: rest_c |> List.flatten)
+    end
   | Apply (f, a) ->
       let f_t, c0 = infer environment f in
       let f_t, c1 = instantiate f_t in
@@ -154,39 +165,75 @@ let rec infer (environment : Environment.t) (e : tm) =
       | Some t -> (t, [])
     end
 
-let rec match_type (x_ty : ty) (y_ty : ty) : bool =
+let rec match_type (x_ty : ty) (y_ty : ty) : ty StringMap.t =
+  Logging.info (fun log ->
+      log "match: %s = %s" (Pretty.render_ty x_ty) (Pretty.render_ty y_ty));
   let x_ty = Type.normalize x_ty in
   let y_ty = Type.normalize y_ty in
   match (x_ty, y_ty) with
   | Int, Int
   | Bool, Bool ->
-      true
+      StringMap.empty
+  | List x_l, List y_l -> match_type x_l y_l
   | Application (x_f, x_a), Application (y_f, y_a) ->
-      match_type x_f y_f && match_type x_a y_a
+      let s0 = match_type x_f y_f in
+      let s1 = match_type x_a y_a in
+      StringMap.merge (fun _ l _ -> l) s0 s1
   | Function (x_a, x_r), Function (y_a, y_r) ->
-      match_type x_a y_a && match_type x_r y_r
-  | Skolem x_s, Skolem y_s -> String.equal x_s y_s
-  | Unification (_, x_u), Unification (_, y_u) -> Unification.equal !x_u !y_u
-  | _, _ -> false
+      let s0 = match_type x_a y_a in
+      let s1 = match_type x_r y_r in
+      StringMap.merge (fun _ l _ -> l) s0 s1
+  | Skolem x_s, Skolem y_s ->
+      if String.equal x_s y_s then StringMap.of_list [ (x_s, y_ty) ]
+      else failwith (__LOC__ ^ ": cannot match types")
+  | Unification (_, x_u), Unification (_, y_u) ->
+      if Unification.equal !x_u !y_u then StringMap.empty
+      else failwith (__LOC__ ^ ": cannot match types")
+  | Skolem s, t
+  | t, Skolem s ->
+      StringMap.of_list [ (s, t) ]
+  | _, _ -> failwith (__LOC__ ^ ": cannot match types")
+
+let match_arguments (predicate_arguments : ty list)
+    (instance_arguments : ty list) =
+  let substitutions =
+    List.map2 match_type predicate_arguments instance_arguments
+  in
+  let merge_left = StringMap.union (fun _ l _ -> Some l) in
+  let substitutions = List.fold_left merge_left StringMap.empty substitutions in
+  replace_type_variables_traversal substitutions
 
 let solve (environment : Environment.t) (wanted : ty_constraint list) :
     ty_constraint list =
-  let find_instance (class_name : string) (arguments : ty list) =
-    let arguments = List.map Type.normalize arguments in
+  let find_instance (class_name : string) (predicate_arguments : ty list) =
+    let predicate_arguments = List.map Type.normalize predicate_arguments in
     let instances = environment |> Environment.get_instances class_name in
-    List.exists
-      (fun (Instance (_, arguments')) ->
-        List.for_all2 match_type arguments arguments')
-      instances
+    instances
+    |> List.find_map (fun (Instance (subgoals, instance_arguments)) ->
+           try
+             let traversal =
+               match_arguments predicate_arguments instance_arguments
+             in
+             Some
+               (subgoals
+               |> List.map (fun subgoal ->
+                      let t, _ = traversal#traverse_ty_predicate () subgoal in
+                      Predicate.to_constraint t))
+           with
+           | _ -> None)
   in
   let rec aux residual wanted =
     match wanted with
     | [] -> residual
     | Predicate head :: rest -> begin
         match head with
-        | Eq t ->
-            if find_instance "Eq" [ t ] then aux residual rest
-            else aux (Predicate head :: residual) rest
+        | Eq t -> begin
+            Logging.info (fun log ->
+                log "finding eq instance: Eq %s" (Pretty.render_ty t));
+            match find_instance "Eq" [ t ] with
+            | None -> aux (Predicate head :: residual) rest
+            | Some subgoals -> aux residual (rest @ subgoals)
+          end
         | Unify (x_ty, y_ty) ->
             unify environment x_ty y_ty;
             aux residual rest
@@ -228,6 +275,20 @@ let program () =
          (fun () -> solve environment (c0 @ c1))
   in
   print_endline @@ Pretty.render_ty t;
+  c
+  |> List.iter (fun (Predicate p) ->
+         print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p);
+
+  environment
+  |> Environment.add_instance "Eq"
+       (Instance ([ Eq (Skolem "a") ], [ List (Skolem "a") ]));
+
+  print_endline "Case 3";
+  let t, c =
+    infer environment (Apply (Variable "eq", List [ Int 21; Int 42 ]))
+  in
+  let c = solve environment c in
+  print_endline @@ Pretty.render_ty @@ Type.normalize t;
   c
   |> List.iter (fun (Predicate p) ->
          print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p)

@@ -6,6 +6,7 @@ type ty =
   | Unification of (string option * ty_unification ref)
   | Int
   | Bool
+  | List of ty
 
 and ty_predicate = Eq of ty | Unify of ty * ty
 and ty_unification = Unsolved of int | Solved of (int * ty)
@@ -19,6 +20,7 @@ type tm =
   | Variable of string
   | Int of int
   | Bool of bool
+  | List of tm list
 
 module Type = struct
   type t = ty
@@ -105,6 +107,7 @@ module Traversal = struct
             | Int
             | Bool ->
                 (ty, state)
+            | List t -> self#traverse_ty state t
           in
           self#ty state ty
 
