@@ -1,3 +1,5 @@
+(include_subdirs qualified)
+
 (library
  (name compiler_lib)
  (public_name outside-in.lib)
