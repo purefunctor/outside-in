@@ -165,72 +165,88 @@ let rec infer (environment : Environment.t) (e : tm) =
       | Some t -> (t, [])
     end
 
-let rec match_type (x_ty : ty) (y_ty : ty) : ty StringMap.t =
-  Logging.info (fun log ->
-      log "match: %s = %s" (Pretty.render_ty x_ty) (Pretty.render_ty y_ty));
-  let x_ty = Type.normalize x_ty in
-  let y_ty = Type.normalize y_ty in
-  match (x_ty, y_ty) with
-  | Int, Int
-  | Bool, Bool ->
-      StringMap.empty
-  | List x_l, List y_l -> match_type x_l y_l
-  | Application (x_f, x_a), Application (y_f, y_a) ->
-      let s0 = match_type x_f y_f in
-      let s1 = match_type x_a y_a in
-      StringMap.merge (fun _ l _ -> l) s0 s1
-  | Function (x_a, x_r), Function (y_a, y_r) ->
-      let s0 = match_type x_a y_a in
-      let s1 = match_type x_r y_r in
-      StringMap.merge (fun _ l _ -> l) s0 s1
-  | Skolem x_s, Skolem y_s ->
-      if String.equal x_s y_s then StringMap.of_list [ (x_s, y_ty) ]
-      else failwith (__LOC__ ^ ": cannot match types")
-  | Unification (_, x_u), Unification (_, y_u) ->
-      if Unification.equal !x_u !y_u then StringMap.empty
-      else failwith (__LOC__ ^ ": cannot match types")
-  | Skolem s, t
-  | t, Skolem s ->
-      StringMap.of_list [ (s, t) ]
-  | _, _ -> failwith (__LOC__ ^ ": cannot match types")
+let union_append s s' = StringMap.union (fun _ v v' -> Some (v @ v')) s s'
 
-let match_arguments (predicate_arguments : ty list)
-    (instance_arguments : ty list) =
+let match_type (p_ty : ty) (i_ty : ty) : ty list StringMap.t =
+  let rec aux (p_ty : ty) (i_ty : ty) =
+    Logging.info (fun log ->
+        log "match: %s = %s" (Pretty.render_ty p_ty) (Pretty.render_ty i_ty));
+    let p_ty = Type.normalize p_ty in
+    let i_ty = Type.normalize i_ty in
+    match (p_ty, i_ty) with
+    | Int, Int
+    | Bool, Bool ->
+        StringMap.empty
+    | List p_l, List i_l -> aux p_l i_l
+    | Application (p_f, p_a), Application (i_f, i_a) ->
+        union_append (aux p_f i_f) (aux p_a i_a)
+    | Function (p_a, p_r), Function (i_a, i_r) ->
+        union_append (aux p_a i_a) (aux p_r i_r)
+    | Skolem p_s, Skolem i_s ->
+        if String.equal p_s i_s then StringMap.of_list [ (p_s, [ i_ty ]) ]
+        else failwith (__LOC__ ^ ": cannot match types")
+    | Unification (_, p_u), Unification (_, i_u) ->
+        if Unification.equal !p_u !i_u then StringMap.empty
+        else failwith (__LOC__ ^ ": cannot match types")
+    | Skolem s, t
+    | t, Skolem s ->
+        StringMap.of_list [ (s, [ t ]) ]
+    | _, _ -> failwith (__LOC__ ^ ": cannot match types")
+  in
+  aux p_ty i_ty
+
+let match_arguments (environment : Environment.t)
+    (predicate_arguments : ty list) (instance_arguments : ty list) =
   let substitutions =
     List.map2 match_type predicate_arguments instance_arguments
+    |> List.fold_left union_append StringMap.empty
   in
-  let merge_left = StringMap.union (fun _ l _ -> Some l) in
-  let substitutions = List.fold_left merge_left StringMap.empty substitutions in
-  replace_type_variables_traversal substitutions
+  let verify k v =
+    match v with
+    | [] -> failwith "invariant violated: empty substitutions."
+    | _ ->
+        let u = fresh_unification (Some k) in
+        List.iter (unify environment u) v;
+        u
+  in
+  let substitutions = StringMap.mapi verify substitutions in
+  let traversal = replace_type_variables_traversal substitutions in
+  fun predicate ->
+    let predicate, _ = traversal#traverse_ty_predicate () predicate in
+    predicate
+
+let find_instance (environment : Environment.t) (class_name : string)
+    (predicate_arguments : ty list) =
+  Logging.info (fun log ->
+      let predicate_arguments =
+        String.concat " " @@ List.map Pretty.render_ty predicate_arguments
+      in
+      log "find_instance: %s %s" class_name predicate_arguments);
+  let predicate_arguments = List.map Type.normalize predicate_arguments in
+  let class_instances = environment |> Environment.get_instances class_name in
+  let try_instance (Instance (subgoals, instance_arguments)) =
+    try
+      let traverse_ty_predicate =
+        match_arguments environment predicate_arguments instance_arguments
+      in
+      let subgoal_to_constraint subgoal =
+        subgoal |> traverse_ty_predicate |> Predicate.to_constraint
+      in
+      Some (List.map subgoal_to_constraint subgoals)
+    with
+    | _ -> None
+  in
+  List.find_map try_instance class_instances
 
 let solve (environment : Environment.t) (wanted : ty_constraint list) :
     ty_constraint list =
-  let find_instance (class_name : string) (predicate_arguments : ty list) =
-    let predicate_arguments = List.map Type.normalize predicate_arguments in
-    let instances = environment |> Environment.get_instances class_name in
-    instances
-    |> List.find_map (fun (Instance (subgoals, instance_arguments)) ->
-           try
-             let traversal =
-               match_arguments predicate_arguments instance_arguments
-             in
-             Some
-               (subgoals
-               |> List.map (fun subgoal ->
-                      let t, _ = traversal#traverse_ty_predicate () subgoal in
-                      Predicate.to_constraint t))
-           with
-           | _ -> None)
-  in
   let rec aux residual wanted =
     match wanted with
     | [] -> residual
     | Predicate head :: rest -> begin
         match head with
         | Eq t -> begin
-            Logging.info (fun log ->
-                log "finding eq instance: Eq %s" (Pretty.render_ty t));
-            match find_instance "Eq" [ t ] with
+            match find_instance environment "Eq" [ t ] with
             | None -> aux (Predicate head :: residual) rest
             | Some subgoals -> aux residual (rest @ subgoals)
           end
