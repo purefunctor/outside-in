@@ -107,7 +107,9 @@ module Traversal = struct
             | Int
             | Bool ->
                 (ty, state)
-            | List t -> self#traverse_ty state t
+            | List t ->
+                let t, state = self#traverse_ty state t in
+                (List t, state)
           in
           self#ty state ty
 
