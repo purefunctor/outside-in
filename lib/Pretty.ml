@@ -27,18 +27,17 @@ let rec pretty_ty =
               string "forall" ^^ space ^^ variables ^^ string "."
         in
         let predicates =
-          let list =
-            match predicates with
-            | [] -> empty
-            | [ predicate ] -> pretty_ty_predicate predicate
-            | _ ->
-                flow_map (comma ^^ space) pretty_ty_predicate predicates
-                |> parens
-          in
-          list ^^ space ^^ string "=>"
+          let pre = space in
+          let post = space ^^ string "=>" ^^ space in
+          match predicates with
+          | [] -> pre
+          | [ predicate ] -> pretty_ty_predicate predicate |> enclose pre post
+          | _ ->
+              flow_map (comma ^^ space) pretty_ty_predicate predicates
+              |> parens |> enclose pre post
         in
         let t = aux t in
-        flow space [ variables; predicates; t ]
+        variables ^^ predicates ^^ t
     | Function (a, r) ->
         let a = aux a in
         let r = aux r in
