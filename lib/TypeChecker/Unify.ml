@@ -39,6 +39,9 @@ and unify (env : Env.t) (x_ty : ty) (y_ty : ty) =
   | Int, Int -> ()
   | Bool, Bool -> ()
   | List x_l, List y_l -> unify env x_l y_l
+  | Constructor x_c, Constructor y_c ->
+      if String.equal x_c y_c then ()
+      else failwith (__LOC__ ^ ": cannot unify constructors.")
   | Application (x_f, x_a), Application (y_f, y_a) ->
       unify env x_f y_f;
       unify env x_a y_a

@@ -14,6 +14,7 @@ let rec pretty_ty =
         let f = aux f |> parens_if (is_ty_application f) in
         let a = aux a |> parens_if (is_ty_application a) in
         f ^^ space ^^ a
+    | Constructor c -> string c
     | Forall (variables, predicates, t) ->
         let variables =
           match variables with
@@ -68,6 +69,7 @@ let pretty_tm =
   let rec aux (e : tm) =
     match e with
     | Apply (f, a) -> aux f ^^ space ^^ aux a
+    | Constructor c -> string c
     | Lambda (x, e) -> string "\\" ^^ string x ^^ dot ^^ space ^^ aux e
     | Variable v -> string v
     | Int i -> string_of_int i |> string

@@ -45,16 +45,27 @@ let rec infer (env : Env.t) (e : tm) =
   | Apply (f, a) ->
       let f_t, c0 = infer env f in
       let f_t, c1 = instantiate f_t in
+
       let a_t, c2 = infer env a in
+      let a_t, c3 = instantiate a_t in
 
       let r_t = Utils.fresh_unification None in
       Unify.unify env f_t (Function (a_t, r_t));
 
-      (r_t, List.concat [ c0; c1; c2 ])
+      (r_t, List.concat [ c0; c1; c2; c3 ])
   | Lambda (v, e) ->
       let v_t = Utils.fresh_unification (Some v) in
       let e_t, c0 = env |> Env.with_value v v_t @@ fun () -> infer env e in
       (Function (v_t, e_t), c0)
+  | Constructor c -> begin
+      match env |> Env.get_constructor c with
+      | None -> failwith (__LOC__ ^ ": unbound constructor")
+      | Some t -> begin
+          match t with
+          | Regular t -> (t, [])
+          | Generalized (_, t) -> (t, [])
+        end
+    end
   | Variable v -> begin
       match env |> Env.get_value v with
       | None -> failwith (__LOC__ ^ ": unbound variable")

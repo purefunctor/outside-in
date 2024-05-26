@@ -1,5 +1,6 @@
 type ty =
   | Application of (ty * ty)
+  | Constructor of string
   | Forall of (string list * ty_predicate list * ty)
   | Function of (ty * ty)
   | Skolem of string
@@ -8,6 +9,7 @@ type ty =
   | Bool
   | List of ty
 
+and ty_constructor = Regular of ty | Generalized of string list * ty
 and ty_predicate = Eq of ty | Unify of ty * ty
 and ty_unification = Unsolved of int | Solved of (int * ty)
 
@@ -16,6 +18,7 @@ type ty_instance = Instance of ty_predicate list * ty list
 
 type tm =
   | Apply of tm * tm
+  | Constructor of string
   | Lambda of string * tm
   | Variable of string
   | Int of int
@@ -86,6 +89,7 @@ module Traversal = struct
                 let f, state = self#traverse_ty state f in
                 let a, state = self#traverse_ty state a in
                 (Application (f, a), state)
+            | Constructor _ -> (ty, state)
             | Forall (v, p, m) ->
                 let p, state =
                   traverse_list self#traverse_ty_predicate state p

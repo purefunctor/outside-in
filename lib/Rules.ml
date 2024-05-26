@@ -50,4 +50,48 @@ let program () =
   print_endline @@ Pretty.render_ty @@ Type.normalize t;
   c
   |> List.iter (fun (Predicate p) ->
+         print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p);
+
+  environment
+  |> Env.add_constructor "Nil"
+       (Regular (Forall ([ "a" ], [], List (Skolem "a"))));
+  environment
+  |> Env.add_constructor "Cons"
+       (Regular
+          (Forall
+             ( [ "a" ],
+               [],
+               Function
+                 (Skolem "a", Function (List (Skolem "a"), List (Skolem "a")))
+             )));
+
+  let t, c = Infer.infer environment (Constructor "Nil") in
+  let c = Solver.solve environment c in
+  print_endline @@ Pretty.render_ty @@ Type.normalize t;
+  c
+  |> List.iter (fun (Predicate p) ->
+         print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p);
+
+  let t, c = Infer.infer environment (Constructor "Cons") in
+  let c = Solver.solve environment c in
+  print_endline @@ Pretty.render_ty @@ Type.normalize t;
+  c
+  |> List.iter (fun (Predicate p) ->
+         print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p);
+
+  let t, c = Infer.infer environment (Apply (Constructor "Cons", Int 0)) in
+  let c = Solver.solve environment c in
+  print_endline @@ Pretty.render_ty @@ Type.normalize t;
+  c
+  |> List.iter (fun (Predicate p) ->
+         print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p);
+
+  let t, c =
+    Infer.infer environment
+      (Apply (Apply (Constructor "Cons", Int 0), Constructor "Nil"))
+  in
+  let c = Solver.solve environment c in
+  print_endline @@ Pretty.render_ty @@ Type.normalize t;
+  c
+  |> List.iter (fun (Predicate p) ->
          print_endline @@ Pretty.render_ty_predicate @@ Predicate.normalize p)
