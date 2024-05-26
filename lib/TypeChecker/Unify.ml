@@ -38,6 +38,7 @@ and unify (env : Env.t) (x_ty : ty) (y_ty : ty) =
   match (x_ty, y_ty) with
   | Int, Int -> ()
   | Bool, Bool -> ()
+  | List x_l, List y_l -> unify env x_l y_l
   | Application (x_f, x_a), Application (y_f, y_a) ->
       unify env x_f y_f;
       unify env x_a y_a
