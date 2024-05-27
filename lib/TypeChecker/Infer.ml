@@ -28,6 +28,15 @@ let instantiate (t : ty) =
       (t, constraints)
   | _ -> (t, [])
 
+(* TODO: Change representation of function arrow such that this is unnecessary. *)
+let split_function =
+  let rec aux arguments (t : ty) =
+    match t with
+    | Function (a, r) -> aux (a :: arguments) r
+    | _ -> (List.rev arguments, t)
+  in
+  aux []
+
 let rec infer (env : Env.t) (e : tm) =
   trace_infer e;
   match e with
@@ -53,6 +62,35 @@ let rec infer (env : Env.t) (e : tm) =
       Unify.unify env f_t (Function (a_t, r_t));
 
       (r_t, List.concat [ c0; c1; c2; c3 ])
+  | Case (e, p, b) ->
+      let e_t, e_c = infer env e in
+      let b_t = Utils.fresh_unification None in
+      let b_c =
+        match p with
+        | PtApply (PtConstructor c, p_arguments) ->
+            let (Constructor (_, c_t)) =
+              env |> Env.get_constructor c |> Option.get
+            in
+            let c_t, c_c = instantiate c_t in
+            let c_arguments, c_result = split_function c_t in
+            let p_variables =
+              p_arguments
+              |> List.filter_map (fun p ->
+                     match p with
+                     | PtVariable v -> Some v
+                     | _ -> failwith "TODO: non-variables not supported yet.")
+            in
+            let in_scope = List.combine p_variables c_arguments in
+            let i_b_t, i_b_c =
+              env |> Env.with_values in_scope (fun () -> infer env b)
+            in
+            let c = Implication (c_c, i_b_c) in
+            Unify.unify env e_t c_result;
+            Unify.unify env b_t i_b_t;
+            [ c ]
+        | _ -> failwith "TODO: not supported yet."
+      in
+      (b_t, e_c @ b_c)
   | Lambda (v, e) ->
       let v_t = Utils.fresh_unification (Some v) in
       let e_t, c0 = env |> Env.with_value v v_t @@ fun () -> infer env e in
@@ -60,10 +98,10 @@ let rec infer (env : Env.t) (e : tm) =
   | Constructor c -> begin
       match env |> Env.get_constructor c with
       | None -> failwith (__LOC__ ^ ": unbound constructor")
-      | Some t -> begin
+      | Some (Constructor (e, t)) -> begin
           match t with
-          | Regular t -> (t, [])
-          | Generalized (_, t) -> (t, [])
+          | Forall (v, p, t) -> (Forall (v @ e, p, t), [])
+          | t -> (Forall (e, [], t), [])
         end
     end
   | Variable v -> begin

@@ -25,15 +25,10 @@ let rec match_type (p_ty : ty) (i_ty : ty) : ty list StringMap.t =
       StringMap.union_append (match_type p_f i_f) (match_type p_a i_a)
   | Function (p_a, p_r), Function (i_a, i_r) ->
       StringMap.union_append (match_type p_a i_a) (match_type p_r i_r)
-  | Skolem p_s, Skolem i_s ->
-      if String.equal p_s i_s then StringMap.of_list [ (p_s, [ i_ty ]) ]
-      else failwith (__LOC__ ^ ": cannot match types")
   | Unification (_, p_u), Unification (_, i_u) ->
       if Unification.equal !p_u !i_u then StringMap.empty
       else failwith (__LOC__ ^ ": cannot match types")
-  | Skolem s, t
-  | t, Skolem s ->
-      StringMap.of_list [ (s, [ t ]) ]
+  | t, Skolem s -> StringMap.of_list [ (s, [ t ]) ]
   | _, _ -> failwith (__LOC__ ^ ": cannot match types")
 
 let match_heads (env : Env.t) (predicate_arguments : ty list)

@@ -9,12 +9,23 @@ type ty =
   | Bool
   | List of ty
 
-and ty_constructor = Regular of ty | Generalized of string list * ty
+and ty_constructor = Constructor of string list * ty
 and ty_predicate = Eq of ty | Unify of ty * ty
 and ty_unification = Unsolved of int | Solved of (int * ty)
 
-type ty_constraint = Predicate of ty_predicate
+type ty_constraint =
+  | Predicate of ty_predicate
+  | Implication of (ty_constraint list * ty_constraint list)
+
 type ty_instance = Instance of ty_predicate list * ty list
+
+type pt =
+  | PtApply of pt * pt list
+  | PtConstructor of string
+  | PtVariable of string
+  | PtInt of int
+  | PtBool of bool
+  | PtList of pt list
 
 type tm =
   | Apply of tm * tm
@@ -24,6 +35,8 @@ type tm =
   | Int of int
   | Bool of bool
   | List of tm list
+  (* TODO: Multiple patterns, exhaustiveness check. *)
+  | Case of tm * pt * tm
 
 module Type = struct
   type t = ty

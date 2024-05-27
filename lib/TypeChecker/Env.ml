@@ -28,12 +28,28 @@ let with_instance k v f e =
   e.instances <- previous_instances;
   r
 
+let with_instances m f e =
+  let previous_instances = e.instances in
+  m
+  |> List.iter (fun (k, v) ->
+         e.instances <- StringMap.add_to_list k v e.instances);
+  let r = f () in
+  e.instances <- previous_instances;
+  r
+
 let add_value k v e = e.values <- StringMap.add k v e.values
 let get_value k e = StringMap.find_opt k e.values
 
 let with_value k v f e =
   let previous_values = e.values in
   e.values <- StringMap.add k v e.values;
+  let r = f () in
+  e.values <- previous_values;
+  r
+
+let with_values m f e =
+  let previous_values = e.values in
+  m |> List.iter (fun (k, v) -> e.values <- StringMap.add k v e.values);
   let r = f () in
   e.values <- previous_values;
   r
