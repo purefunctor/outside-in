@@ -49,7 +49,7 @@ let with_value k v f e =
 
 let with_values m f e =
   let previous_values = e.values in
-  m |> List.iter (fun (k, v) -> e.values <- StringMap.add k v e.values);
+  e.values <- StringMap.union_left m e.values;
   let r = f () in
   e.values <- previous_values;
   r

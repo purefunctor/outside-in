@@ -46,6 +46,14 @@ module Type = struct
       | t -> t
     in
     aux
+
+  let split_function : t -> t list * t =
+    let rec aux arguments (t : t) =
+      match t with
+      | Function (a, r) -> aux (a :: arguments) r
+      | _ -> (List.rev arguments, t)
+    in
+    aux []
 end
 
 module Predicate = struct

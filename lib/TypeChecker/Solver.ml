@@ -51,7 +51,7 @@ let solve (env : Env.t) (wanted : ty_constraint list) : ty_constraint list =
         | Solved subgoals -> aux residual (rest @ subgoals)
         | Unsolved unsolved -> aux (unsolved :: residual) rest
         | WithGiven (given, local) ->
-            let aux () = aux residual (rest @ local) in
+            let aux () = aux residual (local @ rest) in
             Env.with_instances given aux env
       end
   in

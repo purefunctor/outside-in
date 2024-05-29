@@ -28,15 +28,63 @@ let instantiate (t : ty) =
       (t, constraints)
   | _ -> (t, [])
 
-let split_ty_function =
-  let rec aux arguments (t : ty) =
-    match t with
-    | Function (a, r) -> aux (a :: arguments) r
-    | _ -> (List.rev arguments, t)
-  in
-  aux []
+(** [check_pt env p t] checks the pattern [p] against the type [t].
 
-let rec infer (env : Env.t) (e : tm) =
+    Returns:
+    - values to be introduced to the environment.
+    - constraints discharged from matching GADTs. *)
+let rec check_pt (env : Env.t) (p : pt) (t : ty) =
+  match p with
+  | PtConstructor (c, a) ->
+      (* Get the constructor, instantiate its type, and check the argument
+         and result types. For example, given the following constructor:
+
+         Just :: forall a. a -> Maybe a
+
+         c_t_a = ?a
+         c_t_r = Maybe ?a
+
+         For GADTs, we want existential variables (i.e. type variables only
+         appearing in the argument position) to remain rigid. We achieve this
+         by storing them separately from the constructor's type.
+
+         Showable :: exists a. Eq a => a -> Showable
+
+         c_c = [ Eq ^a ]
+         c_t_a = ^a
+         c_t_r = Showable
+      *)
+      let (Constructor (_, c_t)) = env |> Env.get_constructor c |> Option.get in
+      let c_t, c_c = instantiate c_t in
+      let c_t_a, c_t_r = Type.split_function c_t in
+      let m, a_c = List.combine a c_t_a |> check_pt_list env in
+      Unify.unify env t c_t_r;
+      (m, c_c @ a_c)
+  | PtVariable v -> (StringMap.singleton v t, [])
+  | PtInt _ ->
+      Unify.unify env t Int;
+      (StringMap.empty, [])
+  | PtBool _ ->
+      Unify.unify env t Bool;
+      (StringMap.empty, [])
+  | PtList l ->
+      let u = Utils.fresh_unification None in
+      let r =
+        let with_u l = (l, u) in
+        l |> List.map with_u |> check_pt_list env
+      in
+      Unify.unify env t (List u);
+      r
+
+(** [check_pt_list env p_t] is [check_pt] against a list of arguments. *)
+and check_pt_list (env : Env.t) (p_t : (pt * ty) list) =
+  let aux (m, c) (p, t) =
+    let m', c' = check_pt env p t in
+    (StringMap.union_left m' m, c' @ c)
+  in
+  List.fold_left aux (StringMap.empty, []) p_t
+
+and infer (env : Env.t) (e : tm) =
   trace_infer e;
   match e with
   | Int _ -> ((Int : ty), [])
@@ -63,33 +111,10 @@ let rec infer (env : Env.t) (e : tm) =
       (r_t, List.concat [ c0; c1; c2; c3 ])
   | Case (e, p, b) ->
       let e_t, e_c = infer env e in
-      let b_t = Utils.fresh_unification None in
-      let b_c =
-        match p with
-        | PtConstructor (c, a) ->
-            let (Constructor (_, c_t)) =
-              env |> Env.get_constructor c |> Option.get
-            in
-            let c_t, c_c = instantiate c_t in
-            let c_t_a, c_t_r = split_ty_function c_t in
-            let i_b_t, i_b_c =
-              let a =
-                a
-                |> List.filter_map (fun p ->
-                       match p with
-                       | PtVariable v -> Some v
-                       | _ -> failwith "TODO: non-variables not supported yet.")
-              in
-              let in_scope = List.combine a c_t_a in
-              env |> Env.with_values in_scope (fun () -> infer env b)
-            in
-            let c = Implication (c_c, i_b_c) in
-            Unify.unify env e_t c_t_r;
-            Unify.unify env b_t i_b_t;
-            [ c ]
-        | _ -> failwith "TODO: not supported yet."
-      in
-      (b_t, e_c @ b_c)
+      let m, p_c = check_pt env p e_t in
+      let b_t, b_c = env |> Env.with_values m (fun () -> infer env b) in
+      let b_c = Implication (p_c, b_c) in
+      (b_t, b_c :: e_c)
   | Lambda (v, e) ->
       let v_t = Utils.fresh_unification (Some v) in
       let e_t, c0 = env |> Env.with_value v v_t @@ fun () -> infer env e in
