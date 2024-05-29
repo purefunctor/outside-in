@@ -28,8 +28,7 @@ let instantiate (t : ty) =
       (t, constraints)
   | _ -> (t, [])
 
-(* TODO: Change representation of function arrow such that this is unnecessary. *)
-let split_function =
+let split_ty_function =
   let rec aux arguments (t : ty) =
     match t with
     | Function (a, r) -> aux (a :: arguments) r
@@ -67,25 +66,25 @@ let rec infer (env : Env.t) (e : tm) =
       let b_t = Utils.fresh_unification None in
       let b_c =
         match p with
-        | PtApply (PtConstructor c, p_arguments) ->
+        | PtConstructor (c, a) ->
             let (Constructor (_, c_t)) =
               env |> Env.get_constructor c |> Option.get
             in
             let c_t, c_c = instantiate c_t in
-            let c_arguments, c_result = split_function c_t in
-            let p_variables =
-              p_arguments
-              |> List.filter_map (fun p ->
-                     match p with
-                     | PtVariable v -> Some v
-                     | _ -> failwith "TODO: non-variables not supported yet.")
-            in
-            let in_scope = List.combine p_variables c_arguments in
+            let c_t_a, c_t_r = split_ty_function c_t in
             let i_b_t, i_b_c =
+              let a =
+                a
+                |> List.filter_map (fun p ->
+                       match p with
+                       | PtVariable v -> Some v
+                       | _ -> failwith "TODO: non-variables not supported yet.")
+              in
+              let in_scope = List.combine a c_t_a in
               env |> Env.with_values in_scope (fun () -> infer env b)
             in
             let c = Implication (c_c, i_b_c) in
-            Unify.unify env e_t c_result;
+            Unify.unify env e_t c_t_r;
             Unify.unify env b_t i_b_t;
             [ c ]
         | _ -> failwith "TODO: not supported yet."

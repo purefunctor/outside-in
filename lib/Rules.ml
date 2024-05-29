@@ -130,7 +130,7 @@ let program () =
     Infer.infer environment
       (Case
          ( Apply (Constructor "HasEq", Int 42),
-           PtApply (PtConstructor "HasEq", [ PtVariable "a" ]),
+           PtConstructor ("HasEq", [ PtVariable "a" ]),
            Apply (Apply (Variable "eq", Variable "a"), Variable "a") ))
   in
   let c = Solver.solve environment c in

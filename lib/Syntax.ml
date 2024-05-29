@@ -20,8 +20,7 @@ type ty_constraint =
 type ty_instance = Instance of ty_predicate list * ty list
 
 type pt =
-  | PtApply of pt * pt list
-  | PtConstructor of string
+  | PtConstructor of string * pt list
   | PtVariable of string
   | PtInt of int
   | PtBool of bool

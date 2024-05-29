@@ -81,8 +81,7 @@ and pretty_ty_constraint =
 let pretty_pt =
   let rec aux (p : pt) =
     match p with
-    | PtApply (f, a) -> aux f ^^ space ^^ flow_map space aux a
-    | PtConstructor c -> string c
+    | PtConstructor (c, a) -> string c ^^ space ^^ flow_map space aux a
     | PtVariable v -> string v
     | PtInt i -> string_of_int i |> string
     | PtBool b -> string_of_bool b |> string
